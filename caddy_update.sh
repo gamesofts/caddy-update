@@ -34,17 +34,7 @@ if ! tar -zxf "$ZIP_FILE" -C "$TMP_DIRECTORY"; then
   exit 1
 fi
 
-if systemctl list-unit-files | grep -qw 'caddy.service'; then
-  if [[ -n "$(pidof caddy)" ]]; then
-    service caddy stop
-    echo 'info: Stop the Caddy service.'
-  fi
-fi
-
 install -m 755 "${TMP_DIRECTORY}/caddy" "/usr/bin/caddy"
 
 "rm" -r "$TMP_DIRECTORY"
 echo "info: Caddy $RELEASE_VERSION is installed."
-
-service caddy start
-echo 'info: Start the Caddy service.'
