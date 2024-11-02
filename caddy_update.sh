@@ -8,9 +8,27 @@ if ! wget -q 'https://api.github.com/repos/caddyserver/caddy/releases/latest' -O
   exit 1
 fi
 RELEASE_LATEST="$(sed 'y/,/\n/' "$TMP_FILE" | grep 'tag_name' | awk -F '"' '{print substr($4,2)}')"
-RELEASE_VERSION="v${RELEASE_LATEST#v}"
 "rm" "$TMP_FILE"
 
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        --version)
+            shift
+            if [[ -z "$1" || "$1" == --* ]]; then
+                echo "Error: Please specify the correct version."
+                exit 1
+            fi
+            RELEASE_LATEST="$1"
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+RELEASE_VERSION="v${RELEASE_LATEST#v}"
 if [[ "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
   echo "info: No new version. The current version of Caddy is $CURRENT_VERSION ."
   exit 1
