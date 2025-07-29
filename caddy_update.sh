@@ -34,25 +34,19 @@ if [[ "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
   exit 1
 fi
 
-DOWNLOAD_LINK="https://github.com/caddyserver/caddy/releases/download/$RELEASE_VERSION/caddy_${RELEASE_LATEST}_linux_amd64.tar.gz"
+DOWNLOAD_LINK="https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com%2Fcaddy-dns%2Fcloudflare"
 echo "Downloading Caddy archive: $DOWNLOAD_LINK"
 
 TMP_DIRECTORY="$(mktemp -d)"
-ZIP_FILE="${TMP_DIRECTORY}/caddy_${RELEASE_LATEST}_linux_amd64.tar.gz"
+CADDY_FILE="${TMP_DIRECTORY}/caddy_${RELEASE_LATEST}"
 
-if ! wget -q "$DOWNLOAD_LINK" -O "$ZIP_FILE"; then
+if ! wget -q "$DOWNLOAD_LINK" -O "$CADDY_FILE"; then
   echo 'error: Download failed! Please check your network or try again.'
   "rm" -r "$TMP_DIRECTORY"
   exit 1
 fi
 
-if ! tar -zxf "$ZIP_FILE" -C "$TMP_DIRECTORY"; then
-  echo 'error: Caddy decompression failed.'
-  "rm" -r "$TMP_DIRECTORY"
-  exit 1
-fi
-
-install -m 755 "${TMP_DIRECTORY}/caddy" "/usr/bin/caddy"
+install -m 755 "${CADDY_FILE}" "/usr/bin/caddy"
 
 "rm" -r "$TMP_DIRECTORY"
 echo "info: Caddy $RELEASE_VERSION is installed."
