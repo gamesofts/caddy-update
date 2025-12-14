@@ -47,6 +47,31 @@ if ! wget -q "$DOWNLOAD_LINK" -O "$CADDY_FILE"; then
 fi
 
 install -m 755 "${CADDY_FILE}" "/usr/bin/caddy"
-
 "rm" -r "$TMP_DIRECTORY"
+
+if [[ ! -f "/lib/systemd/system/caddy.service" ]]; then
+  cat >"/lib/systemd/system/caddy.service" <<'EOF'
+[Unit]
+Description=Caddy
+Documentation=https://caddyserver.com/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+mkdir /etc/caddy
+systemctl enable caddy.service
+fi
+
 echo "info: Caddy $RELEASE_VERSION is installed."
