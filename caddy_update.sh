@@ -40,7 +40,7 @@ echo "Downloading Caddy archive: $DOWNLOAD_LINK"
 TMP_DIRECTORY="$(mktemp -d)"
 CADDY_FILE="${TMP_DIRECTORY}/caddy_${RELEASE_LATEST}"
 
-if ! wget -q "$DOWNLOAD_LINK" -O "$CADDY_FILE"; then
+if ! wget -q --user-agent="Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36" "$DOWNLOAD_LINK" -O "$CADDY_FILE"; then
   echo 'error: Download failed! Please check your network or try again.'
   "rm" -r "$TMP_DIRECTORY"
   exit 1
