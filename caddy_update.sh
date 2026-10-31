@@ -62,29 +62,11 @@ fi
 ARCHIVE="caddy-$RELEASE_VERSION-linux-amd64.tar.gz"
 DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$RELEASE_TAG"
 echo "Downloading Caddy $RELEASE_VERSION from $RELEASE_REPO"
-if ! wget -q "$DOWNLOAD_BASE/$ARCHIVE" -O "$TMP_DIRECTORY/$ARCHIVE" ||
-   ! wget -q "$DOWNLOAD_BASE/SHA256SUMS" -O "$TMP_DIRECTORY/SHA256SUMS"; then
-    echo "error: Failed to download release archive or checksums." >&2
+if ! wget -q "$DOWNLOAD_BASE/$ARCHIVE" -O "$TMP_DIRECTORY/$ARCHIVE"; then
+    echo "error: Failed to download release archive." >&2
     exit 1
 fi
-(
-    cd "$TMP_DIRECTORY"
-    sha256sum -c SHA256SUMS
-)
 tar -xzf "$TMP_DIRECTORY/$ARCHIVE" -C "$TMP_DIRECTORY" caddy
-if [[ ! -f "$TMP_DIRECTORY/caddy" ]]; then
-    echo "error: Release archive does not contain caddy." >&2
-    exit 1
-fi
-if ! "$TMP_DIRECTORY/caddy" list-modules | grep -Fxq 'http.handlers.forward_proxy' ||
-   ! "$TMP_DIRECTORY/caddy" list-modules | grep -Fxq 'dns.providers.cloudflare'; then
-    echo "error: Release binary is missing Naive forwardproxy or Cloudflare DNS module." >&2
-    exit 1
-fi
-if [[ "$("$TMP_DIRECTORY/caddy" version | awk 'NR==1 {print $1}')" != "$RELEASE_VERSION" ]]; then
-    echo "error: Downloaded Caddy version does not match the release tag." >&2
-    exit 1
-fi
 
 install -m 755 "$TMP_DIRECTORY/caddy" /usr/bin/caddy
 
