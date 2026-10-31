@@ -1,26 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Updates Caddy from the Linux amd64 releases built by gamesofts/forwardproxy.
+RELEASE_REPO="gamesofts/forwardproxy"
 VERSION="$(/usr/bin/caddy version | awk 'NR==1 {print substr($1,2)}')"
 CURRENT_VERSION="v${VERSION#v}"
 
-TMP_FILE="$(mktemp)"
-if ! wget -q 'https://api.github.com/repos/caddyserver/caddy/releases/latest' -O "$TMP_FILE"; then
-  "rm" "$TMP_FILE"
-  echo 'error: Failed to get release list, please check your network.'
-  exit 1
-fi
-RELEASE_LATEST="$(sed 'y/,/\n/' "$TMP_FILE" | grep 'tag_name' | awk -F '"' '{print substr($4,2)}')"
-"rm" "$TMP_FILE"
-
+REQUESTED_VERSION=""
 while [[ $# -gt 0 ]]; do
-    key="$1"
-    case $key in
+    case "$1" in
         --version)
-            shift
-            if [[ -z "$1" || "$1" == --* ]]; then
-                echo "Error: Please specify the correct version."
+            if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+                echo "error: Please specify the correct version." >&2
                 exit 1
             fi
-            RELEASE_LATEST="$1"
-            shift
+            REQUESTED_VERSION="v${2#v}"
+            shift 2
             ;;
         *)
             shift
@@ -28,26 +23,70 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-RELEASE_VERSION="v${RELEASE_LATEST#v}"
-if [[ "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
-  echo "info: No new version. The current version of Caddy is $CURRENT_VERSION ."
-  exit 1
+if [[ -n "$REQUESTED_VERSION" && ! "$REQUESTED_VERSION" =~ ^v2\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: Invalid Caddy version: $REQUESTED_VERSION" >&2
+    exit 1
 fi
-
-DOWNLOAD_LINK="https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com%2Fcaddy-dns%2Fcloudflare"
-echo "Downloading Caddy archive: $DOWNLOAD_LINK"
 
 TMP_DIRECTORY="$(mktemp -d)"
-CADDY_FILE="${TMP_DIRECTORY}/caddy_${RELEASE_LATEST}"
+trap 'rm -rf "$TMP_DIRECTORY"' EXIT
 
-if ! wget -q --user-agent="Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36" "$DOWNLOAD_LINK" -O "$CADDY_FILE"; then
-  echo 'error: Download failed! Please check your network or try again.'
-  "rm" -r "$TMP_DIRECTORY"
-  exit 1
+if [[ -n "$REQUESTED_VERSION" ]]; then
+    RELEASE_TAG="caddy-$REQUESTED_VERSION"
+    RELEASE_API="https://api.github.com/repos/$RELEASE_REPO/releases/tags/$RELEASE_TAG"
+else
+    RELEASE_API="https://api.github.com/repos/$RELEASE_REPO/releases/latest"
 fi
 
-install -m 755 "${CADDY_FILE}" "/usr/bin/caddy"
-"rm" -r "$TMP_DIRECTORY"
+if ! wget -q "$RELEASE_API" -O "$TMP_DIRECTORY/release.json"; then
+    echo "error: Failed to get forwardproxy release information: $RELEASE_API" >&2
+    exit 1
+fi
+
+# Both latest and by-tag API responses contain a single tag_name.
+RELEASE_TAG="$(grep -m1 '"tag_name"' "$TMP_DIRECTORY/release.json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+if [[ ! "$RELEASE_TAG" =~ ^caddy-v2\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: Unexpected forwardproxy release tag: $RELEASE_TAG" >&2
+    exit 1
+fi
+RELEASE_VERSION="${RELEASE_TAG#caddy-}"
+if [[ -n "$REQUESTED_VERSION" && "$RELEASE_VERSION" != "$REQUESTED_VERSION" ]]; then
+    echo "error: Release version does not match the requested version." >&2
+    exit 1
+fi
+if [[ -z "$REQUESTED_VERSION" && "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
+    echo "info: No new version. The current version of Caddy is $CURRENT_VERSION."
+    exit 0
+fi
+
+ARCHIVE="caddy-$RELEASE_VERSION-linux-amd64.tar.gz"
+DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$RELEASE_TAG"
+echo "Downloading Caddy $RELEASE_VERSION from $RELEASE_REPO"
+if ! wget -q "$DOWNLOAD_BASE/$ARCHIVE" -O "$TMP_DIRECTORY/$ARCHIVE" ||
+   ! wget -q "$DOWNLOAD_BASE/SHA256SUMS" -O "$TMP_DIRECTORY/SHA256SUMS"; then
+    echo "error: Failed to download release archive or checksums." >&2
+    exit 1
+fi
+(
+    cd "$TMP_DIRECTORY"
+    sha256sum -c SHA256SUMS
+)
+tar -xzf "$TMP_DIRECTORY/$ARCHIVE" -C "$TMP_DIRECTORY" caddy
+if [[ ! -f "$TMP_DIRECTORY/caddy" ]]; then
+    echo "error: Release archive does not contain caddy." >&2
+    exit 1
+fi
+if ! "$TMP_DIRECTORY/caddy" list-modules | grep -Fxq 'http.handlers.forward_proxy' ||
+   ! "$TMP_DIRECTORY/caddy" list-modules | grep -Fxq 'dns.providers.cloudflare'; then
+    echo "error: Release binary is missing Naive forwardproxy or Cloudflare DNS module." >&2
+    exit 1
+fi
+if [[ "$("$TMP_DIRECTORY/caddy" version | awk 'NR==1 {print $1}')" != "$RELEASE_VERSION" ]]; then
+    echo "error: Downloaded Caddy version does not match the release tag." >&2
+    exit 1
+fi
+
+install -m 755 "$TMP_DIRECTORY/caddy" /usr/bin/caddy
 
 if [[ ! -f "/lib/systemd/system/caddy.service" ]]; then
   cat >"/lib/systemd/system/caddy.service" <<'EOF'
@@ -70,8 +109,8 @@ AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 [Install]
 WantedBy=multi-user.target
 EOF
-mkdir /etc/caddy
+mkdir -p /etc/caddy
 systemctl enable caddy.service
 fi
 
-echo "info: Caddy $RELEASE_VERSION is installed."
+echo "info: Caddy $RELEASE_VERSION is installed from $RELEASE_REPO."
