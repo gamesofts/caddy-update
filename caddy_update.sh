@@ -97,7 +97,12 @@ if ! wget -q "$DOWNLOAD_BASE/$ARCHIVE" -O "$TMP_DIRECTORY/$ARCHIVE"; then
 fi
 tar -xzf "$TMP_DIRECTORY/$ARCHIVE" -C "$TMP_DIRECTORY" caddy
 
-install -m 755 "$TMP_DIRECTORY/caddy" /usr/bin/caddy
+# Replace atomically: overwriting a running /usr/bin/caddy can fail with
+# "Text file busy", while renaming a new executable into place is safe.
+INSTALL_TEMP="$(mktemp /usr/bin/.caddy-update.XXXXXXXX)"
+trap 'rm -rf "$TMP_DIRECTORY"; rm -f "$INSTALL_TEMP"' EXIT
+install -m 755 "$TMP_DIRECTORY/caddy" "$INSTALL_TEMP"
+mv -f "$INSTALL_TEMP" /usr/bin/caddy
 
 if [[ ! -f "/lib/systemd/system/caddy.service" ]]; then
   cat >"/lib/systemd/system/caddy.service" <<'EOF'
