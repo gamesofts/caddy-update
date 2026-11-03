@@ -78,6 +78,10 @@ if [[ ! "$RELEASE_TAG" =~ ^caddy-(v2\.[0-9]+\.[0-9]+)(-naive-[0-9a-f]{12})?$ ]];
     exit 1
 fi
 RELEASE_VERSION="${BASH_REMATCH[1]}"
+if [[ -n "$REQUESTED_VERSION" && "$RELEASE_VERSION" != "$REQUESTED_VERSION" ]]; then
+    echo "error: Release version does not match the requested version." >&2
+    exit 1
+fi
 
 # Store the installed release tag, not only the Caddy core version.
 # On a first run without a tag record, reinstall once to pick up plugin
