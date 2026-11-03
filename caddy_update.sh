@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Updates Caddy from the Linux amd64 releases built by gamesofts/forwardproxy.
 RELEASE_REPO="gamesofts/forwardproxy"
+INSTALLED_RELEASE_FILE="/var/lib/caddy-update/installed-release"
 VERSION="$(/usr/bin/caddy version | awk 'NR==1 {print substr($1,2)}')"
 CURRENT_VERSION="v${VERSION#v}"
 
@@ -31,37 +32,65 @@ fi
 TMP_DIRECTORY="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIRECTORY"' EXIT
 
+# Newer releases have source-specific tags, for example:
+# caddy-v2.11.7-naive-ead68e770834. A Caddy core version alone is not
+# sufficient to decide whether the Naive forwardproxy plugin is current.
+RELEASE_TAG=""
 if [[ -n "$REQUESTED_VERSION" ]]; then
-    RELEASE_TAG="caddy-$REQUESTED_VERSION"
-    RELEASE_API="https://api.github.com/repos/$RELEASE_REPO/releases/tags/$RELEASE_TAG"
+    # Choose the most recent release of the requested Caddy version,
+    # including source-specific Naive builds. No jq/python dependency.
+    RELEASE_LIST_API="https://api.github.com/repos/$RELEASE_REPO/releases?per_page=100"
+    if ! wget -q "$RELEASE_LIST_API" -O "$TMP_DIRECTORY/releases.json"; then
+        echo "error: Failed to list forwardproxy releases: $RELEASE_LIST_API" >&2
+        exit 1
+    fi
+    while IFS= read -r candidate; do
+        if [[ "$candidate" =~ ^caddy-(v2\.[0-9]+\.[0-9]+)(-naive-[0-9a-f]{12})?$ ]] \
+            && [[ "${BASH_REMATCH[1]}" == "$REQUESTED_VERSION" ]]; then
+            RELEASE_TAG="$candidate"
+            break
+        fi
+    done < <(grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' "$TMP_DIRECTORY/releases.json" \
+        | sed -E 's/.*"([^"]+)"$/\1/')
+
+    if [[ -z "$RELEASE_TAG" ]]; then
+        # Old versions may fall outside the most recent 100 releases.
+        RELEASE_API="https://api.github.com/repos/$RELEASE_REPO/releases/tags/caddy-$REQUESTED_VERSION"
+        if ! wget -q "$RELEASE_API" -O "$TMP_DIRECTORY/release.json"; then
+            echo "error: No release found for Caddy $REQUESTED_VERSION" >&2
+            exit 1
+        fi
+        RELEASE_TAG="$(grep -m1 '"tag_name"' "$TMP_DIRECTORY/release.json" \
+            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    fi
 else
     RELEASE_API="https://api.github.com/repos/$RELEASE_REPO/releases/latest"
+    if ! wget -q "$RELEASE_API" -O "$TMP_DIRECTORY/release.json"; then
+        echo "error: Failed to get forwardproxy release information: $RELEASE_API" >&2
+        exit 1
+    fi
+    RELEASE_TAG="$(grep -m1 '"tag_name"' "$TMP_DIRECTORY/release.json" \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 fi
 
-if ! wget -q "$RELEASE_API" -O "$TMP_DIRECTORY/release.json"; then
-    echo "error: Failed to get forwardproxy release information: $RELEASE_API" >&2
-    exit 1
-fi
-
-# Both latest and by-tag API responses contain a single tag_name.
-RELEASE_TAG="$(grep -m1 '"tag_name"' "$TMP_DIRECTORY/release.json" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-if [[ ! "$RELEASE_TAG" =~ ^caddy-v2\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ! "$RELEASE_TAG" =~ ^caddy-(v2\.[0-9]+\.[0-9]+)(-naive-[0-9a-f]{12})?$ ]]; then
     echo "error: Unexpected forwardproxy release tag: $RELEASE_TAG" >&2
     exit 1
 fi
-RELEASE_VERSION="${RELEASE_TAG#caddy-}"
-if [[ -n "$REQUESTED_VERSION" && "$RELEASE_VERSION" != "$REQUESTED_VERSION" ]]; then
-    echo "error: Release version does not match the requested version." >&2
-    exit 1
-fi
-if [[ -z "$REQUESTED_VERSION" && "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
-    echo "info: No new version. The current version of Caddy is $CURRENT_VERSION."
+RELEASE_VERSION="${BASH_REMATCH[1]}"
+
+# Store the installed release tag, not only the Caddy core version.
+# On a first run without a tag record, reinstall once to pick up plugin
+# updates even if 'caddy version' is unchanged.
+INSTALLED_RELEASE="$(cat "$INSTALLED_RELEASE_FILE" 2>/dev/null || true)"
+if [[ "$RELEASE_TAG" == "$INSTALLED_RELEASE" && "$RELEASE_VERSION" == "$CURRENT_VERSION" ]]; then
+    echo "info: Already installed $RELEASE_TAG; no update needed."
     exit 0
 fi
 
-ARCHIVE="caddy-$RELEASE_VERSION-linux-amd64.tar.gz"
+ARCHIVE="${RELEASE_TAG}-linux-amd64.tar.gz"
 DOWNLOAD_BASE="https://github.com/$RELEASE_REPO/releases/download/$RELEASE_TAG"
-echo "Downloading Caddy $RELEASE_VERSION from $RELEASE_REPO"
+echo "Downloading $RELEASE_TAG from $RELEASE_REPO"
 if ! wget -q "$DOWNLOAD_BASE/$ARCHIVE" -O "$TMP_DIRECTORY/$ARCHIVE"; then
     echo "error: Failed to download release archive." >&2
     exit 1
@@ -95,4 +124,6 @@ mkdir -p /etc/caddy
 systemctl enable caddy.service
 fi
 
-echo "info: Caddy $RELEASE_VERSION is installed from $RELEASE_REPO."
+mkdir -p "$(dirname "$INSTALLED_RELEASE_FILE")"
+printf '%s\n' "$RELEASE_TAG" > "$INSTALLED_RELEASE_FILE"
+echo "info: Installed $RELEASE_TAG from $RELEASE_REPO."
